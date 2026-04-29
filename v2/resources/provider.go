@@ -61,6 +61,7 @@ func Provider() *schema.Provider {
 			"zedcloud_app_profile":          AppProfileDataResource(),
 			"zedcloud_asset_group":          AssetGroupDataResource(),
 			"zedcloud_profile_deployment":   ProfileDeploymentDataResource(),
+			"zedcloud_deployment":           DeploymentDataSource(),
 		},
 		ResourcesMap: map[string]*schema.Resource{
 			"zedcloud_edgenode":               NodeResource(),

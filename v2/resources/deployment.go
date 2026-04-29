@@ -241,3 +241,155 @@ func getLatestProjectDeployment(ctx context.Context, client *api_client.Zedcloud
 	}
 	return latestDeploymentID, nil
 }
+
+// DeploymentDataSource returns the schema and methods for the Deployment datasource.
+func DeploymentDataSource() *schema.Resource {
+	return &schema.Resource{
+		Description: `Data source "zedcloud_deployment" retrieves deployment information from ZedCloud.
+Can be searched by name and project_id or by id and project_id.`,
+		ReadContext: ReadDeployment,
+		Schema:      zschema.Deployment(),
+	}
+}
+
+// ReadDeployment reads a deployment by name or ID. For datasources, it supports lookup by either field.
+func ReadDeployment(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
+	var deployment *models.Deployment
+	var diags diag.Diagnostics
+
+	if _, isSet := d.GetOk("name"); isSet {
+		deployment, diags = readDeploymentByName(ctx, d, m)
+	} else if _, isSet := d.GetOk("id"); isSet {
+		deployment, diags = readDeploymentByID(ctx, d, m)
+	} else {
+		diags = append(diags, diag.Errorf("must specify either name or id")...)
+		return diags
+	}
+
+	if diags.HasError() {
+		return diags
+	}
+
+	zschema.SetDeploymentResourceData(d, deployment)
+	d.SetId(deployment.ID)
+
+	return diags
+}
+
+// readDeploymentByID reads a deployment by ID and project_id.
+func readDeploymentByID(ctx context.Context, d *schema.ResourceData, m interface{}) (*models.Deployment, diag.Diagnostics) {
+	var diags diag.Diagnostics
+
+	params := deployment.NewGetByIDParams()
+
+	xRequestIdVal, xRequestIdIsSet := d.GetOk("x_request_id")
+	if xRequestIdIsSet {
+		params.XRequestID = xRequestIdVal.(*string)
+	}
+
+	id, isSet := d.GetOk("id")
+	if !isSet {
+		return nil, append(diags, diag.Errorf("missing required parameter: id")...)
+	}
+	params.ID = id.(string)
+
+	projectID, isSet := d.GetOk("project_id")
+	if !isSet {
+		return nil, append(diags, diag.Errorf("missing required parameter: project_id")...)
+	}
+	params.ProjectID = projectID.(string)
+
+	client := m.(*api_client.ZedcloudAPI)
+
+	resp, err := client.Deployment.GetByID(params, nil)
+	if err != nil {
+		log.Printf("[TRACE] deployment read by id error: %s", spew.Sdump(err))
+		if ds, ok := ZsrvResponderToDiags(err); ok {
+			diags = append(diags, ds...)
+			return nil, diags
+		}
+
+		diags = append(diags, diag.Errorf("deployment read by id error: %s", err)...)
+		return nil, diags
+	}
+
+	deploymentData := resp.GetPayload()
+
+	return deploymentData, diags
+}
+
+// readDeploymentByName reads a deployment by name and project_id.
+func readDeploymentByName(ctx context.Context, d *schema.ResourceData, m interface{}) (*models.Deployment, diag.Diagnostics) {
+	var diags diag.Diagnostics
+
+	name, isSet := d.GetOk("name")
+	if !isSet {
+		return nil, append(diags, diag.Errorf("missing required parameter: name")...)
+	}
+	nameStr := name.(string)
+
+	projectID, isSet := d.GetOk("project_id")
+	if !isSet {
+		return nil, append(diags, diag.Errorf("missing required parameter: project_id")...)
+	}
+	projectIDStr := projectID.(string)
+
+	params := deployment.NewGetListbyIdParams()
+	params.SetProjectID(projectIDStr)
+
+	client := m.(*api_client.ZedcloudAPI)
+
+	resp, err := client.Deployment.GetListByProjectID(params, nil)
+	if err != nil {
+		log.Printf("[TRACE] deployment read by name error: %s", spew.Sdump(err))
+		if ds, ok := ZsrvResponderToDiags(err); ok {
+			diags = append(diags, ds...)
+			return nil, diags
+		}
+
+		diags = append(diags, diag.Errorf("deployment read by name error: %s", err)...)
+		return nil, diags
+	}
+
+	responseData := resp.GetPayload()
+
+	// Find the deployment ID by name, then fetch the full deployment object
+	var deploymentID string
+	for _, dep := range responseData.List {
+		if dep.Name == nameStr {
+			deploymentID = dep.ID
+			break
+		}
+	}
+
+	if deploymentID == "" {
+		diags = append(diags, diag.Errorf("deployment with name %s not found in project %s", nameStr, projectIDStr)...)
+		return nil, diags
+	}
+
+	// Now fetch the full deployment object by ID
+	getByIDParams := deployment.NewGetByIDParams()
+	getByIDParams.ID = deploymentID
+	getByIDParams.ProjectID = projectIDStr
+
+	xRequestIdVal, xRequestIdIsSet := d.GetOk("x_request_id")
+	if xRequestIdIsSet {
+		getByIDParams.XRequestID = xRequestIdVal.(*string)
+	}
+
+	resp2, err := client.Deployment.GetByID(getByIDParams, nil)
+	if err != nil {
+		log.Printf("[TRACE] deployment read by id error: %s", spew.Sdump(err))
+		if ds, ok := ZsrvResponderToDiags(err); ok {
+			diags = append(diags, ds...)
+			return nil, diags
+		}
+
+		diags = append(diags, diag.Errorf("deployment read by id error: %s", err)...)
+		return nil, diags
+	}
+
+	deploymentData := resp2.GetPayload()
+
+	return deploymentData, diags
+}
